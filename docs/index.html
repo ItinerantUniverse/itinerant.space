@@ -1,0 +1,325 @@
+<html>
+    <head>
+        <title>ITINERANT</title>
+    </head>
+    <body>
+
+<style>
+    .logo-canvas {
+        border: none;
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+    }
+</style>
+
+<script id="draw-shader-fs" type="x-shader/x-fragment">
+precision mediump float;
+    
+uniform vec2 iResolution;
+uniform vec2 iMouse;
+uniform float iTime;
+uniform sampler2D iChannel0;
+    
+// change these values to 0.0 to turn off individual effects
+float vertJerkOpt = 0.46;
+float vertMovementOpt = 1.0;
+float bottomStaticOpt = 1.4;
+float scalinesOpt = 1.0;
+float rgbOffsetOpt = 0.3;
+float horzFuzzOpt = 0.2;
+
+// Noise generation functions borrowed from:
+// https://github.com/ashima/webgl-noise/blob/master/src/noise2D.glsl
+
+vec3 mod289(vec3 x) {
+    return x - floor(x * (1.0 / 289.0)) * 289.0;
+}
+
+vec2 mod289(vec2 x) {
+    return x - floor(x * (1.0 / 289.0)) * 289.0;
+}
+
+vec3 permute(vec3 x) {
+    return mod289(((x*34.0)+1.0)*x);
+}
+
+float snoise(vec2 v)
+    {
+    const vec4 C = vec4(0.211324865405187,  // (3.0-sqrt(3.0))/6.0
+                        0.366025403784439,  // 0.5*(sqrt(3.0)-1.0)
+                        -0.577350269189626,  // -1.0 + 2.0 * C.x
+                        0.024390243902439); // 1.0 / 41.0
+// First corner
+    vec2 i  = floor(v + dot(v, C.yy) );
+    vec2 x0 = v -   i + dot(i, C.xx);
+
+// Other corners
+    vec2 i1;
+    //i1.x = step( x0.y, x0.x ); // x0.x > x0.y ? 1.0 : 0.0
+    //i1.y = 1.0 - i1.x;
+    i1 = (x0.x > x0.y) ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
+    // x0 = x0 - 0.0 + 0.0 * C.xx ;
+    // x1 = x0 - i1 + 1.0 * C.xx ;
+    // x2 = x0 - 1.0 + 2.0 * C.xx ;
+    vec4 x12 = x0.xyxy + C.xxzz;
+    x12.xy -= i1;
+
+// Permutations
+    i = mod289(i); // Avoid truncation effects in permutation
+    vec3 p = permute( permute( i.y + vec3(0.0, i1.y, 1.0 ))
+        + i.x + vec3(0.0, i1.x, 1.0 ));
+
+    vec3 m = max(0.5 - vec3(dot(x0,x0), dot(x12.xy,x12.xy), dot(x12.zw,x12.zw)), 0.0);
+    m = m*m ;
+    m = m*m ;
+
+// Gradients: 41 points uniformly over a line, mapped onto a diamond.
+// The ring size 17*17 = 289 is close to a multiple of 41 (41*7 = 287)
+
+    vec3 x = 2.0 * fract(p * C.www) - 1.0;
+    vec3 h = abs(x) - 0.5;
+    vec3 ox = floor(x + 0.5);
+    vec3 a0 = x - ox;
+
+// Normalise gradients implicitly by scaling m
+// Approximation of: m *= inversesqrt( a0*a0 + h*h );
+    m *= 1.79284291400159 - 0.85373472095314 * ( a0*a0 + h*h );
+
+// Compute final noise value at P
+    vec3 g;
+    g.x  = a0.x  * x0.x  + h.x  * x0.y;
+    g.yz = a0.yz * x12.xz + h.yz * x12.yw;
+    return 130.0 * dot(m, g);
+}
+
+float staticV(vec2 uv) {
+    float staticHeight = snoise(vec2(9.0,iTime*1.2+3.0))*0.3+5.0;
+    float staticAmount = snoise(vec2(1.0,iTime*1.2-6.0))*0.1+0.3;
+    float staticStrength = snoise(vec2(-9.75,iTime*0.6-3.0))*2.0+2.0;
+    return (1.0-step(snoise(vec2(5.0*pow(iTime,2.0)+pow(uv.x*7.0,1.2),pow((mod(iTime,100.0)+100.0)*uv.y*0.3+3.0,staticHeight))),staticAmount))*staticStrength;
+}
+
+
+void mainImage( out vec4 fragColor, in vec2 fragCoord )
+{
+    //vec4 test = texture2D(iChannel0, vec2(0.0, 0.0));
+
+    vec2 uv =  fragCoord.xy/iResolution.xy;
+
+    float jerkOffset = (1.0-step(snoise(vec2(iTime*1.3,5.0)),0.8))*0.05;
+
+    float fuzzOffset = snoise(vec2(iTime*15.0,uv.y*80.0))*0.003;
+    float largeFuzzOffset = snoise(vec2(iTime*1.0,uv.y*25.0))*0.004;
+
+    float vertMovementOn = (1.0-step(snoise(vec2(iTime*0.2,8.0)),0.4))*vertMovementOpt;
+    float vertJerk = (1.0-step(snoise(vec2(iTime*1.5,5.0)),0.6))*vertJerkOpt;
+    float vertJerk2 = (1.0-step(snoise(vec2(iTime*5.5,5.0)),0.2))*vertJerkOpt;
+    float yOffset = abs(sin(iTime)*4.0)*vertMovementOn+vertJerk*vertJerk2*0.3;
+    float y = mod(uv.y+yOffset,1.0);
+
+
+    float xOffset = (fuzzOffset + largeFuzzOffset) * horzFuzzOpt;
+
+    float staticVal = 0.0;
+
+    for (float y = -1.0; y <= 1.0; y += 1.0) {
+        float maxDist = 5.0/200.0;
+        float dist = y/200.0;
+        staticVal += staticV(vec2(uv.x,uv.y+dist))*(maxDist-abs(dist))*1.5;
+    }
+
+    staticVal *= bottomStaticOpt;
+
+    float red 	=   texture2D(iChannel0, vec2(uv.x + xOffset - 0.01 * rgbOffsetOpt, y)).r+staticVal;
+    float green = 	texture2D(iChannel0, vec2(uv.x + xOffset, y)).g+staticVal;
+    float blue 	=	texture2D(iChannel0, vec2(uv.x + xOffset + 0.01 * rgbOffsetOpt, y)).b+staticVal;
+
+    vec3 color = vec3(red,green,blue);
+    float scanline = sin(uv.y*800.0)*0.04*scalinesOpt;
+    color -= scanline;
+
+    fragColor = vec4(color,1.0);
+}
+    
+    
+void main() 
+{
+    mainImage( gl_FragColor, gl_FragCoord.xy );
+}
+</script>
+
+<script id="draw-shader-vs" type="x-shader/x-vertex">
+attribute vec2 inPos;
+    
+void main()
+{
+    gl_Position = vec4(inPos, 0.0, 1.0);
+}
+</script>
+
+<canvas id="ogl-canvas" class="logo-canvas" width="1024" height="1024"></canvas>
+
+<script>
+    (function loadscene() {    
+
+    var canvas, gl, vp_size, prog, bufObj = {}, mousepos = [0, 0];
+
+    function initScene() {
+
+        canvas = document.getElementById( "ogl-canvas");
+        //gl = canvas.getContext( "experimental-webgl" );
+        gl = canvas.getContext( "webgl2" );
+        if ( !gl )
+          return;
+
+        canvas.addEventListener('mousemove', (e) => {
+            mousepos = [e.clientX, e.clientY];
+        });
+
+
+        progDraw = gl.createProgram();
+        for (let i = 0; i < 2; ++i) {
+            let source = document.getElementById(i==0 ? "draw-shader-vs" : "draw-shader-fs").text;
+            let shaderObj = gl.createShader(i==0 ? gl.VERTEX_SHADER : gl.FRAGMENT_SHADER);
+            gl.shaderSource(shaderObj, source);
+            gl.compileShader(shaderObj);
+            let status = gl.getShaderParameter(shaderObj, gl.COMPILE_STATUS);
+            if (!status) alert(gl.getShaderInfoLog(shaderObj));
+            gl.attachShader(progDraw, shaderObj);
+            gl.linkProgram(progDraw);
+        }
+        status = gl.getProgramParameter(progDraw, gl.LINK_STATUS);
+        if ( !status ) alert(gl.getProgramInfoLog(progDraw));
+        progDraw.inPos = gl.getAttribLocation(progDraw, "inPos");
+        progDraw.iTime = gl.getUniformLocation(progDraw, "iTime");
+        progDraw.iMouse = gl.getUniformLocation(progDraw, "iMouse");
+        progDraw.iResolution = gl.getUniformLocation(progDraw, "iResolution");
+        progDraw.iChannel0 = gl.getUniformLocation(progDraw, "iChannel0");
+        gl.useProgram(progDraw);
+
+        var texture = loadTexture(gl, '/img/logo-square.png');
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+
+        var pos = [ -1, -1, 1, -1, 1, 1, -1, 1 ];
+        var inx = [ 0, 1, 2, 0, 2, 3 ];
+        bufObj.pos = gl.createBuffer();
+        gl.bindBuffer( gl.ARRAY_BUFFER, bufObj.pos );
+        gl.bufferData( gl.ARRAY_BUFFER, new Float32Array( pos ), gl.STATIC_DRAW );
+        bufObj.inx = gl.createBuffer();
+        bufObj.inx.len = inx.length;
+        gl.bindBuffer( gl.ELEMENT_ARRAY_BUFFER, bufObj.inx );
+        gl.bufferData( gl.ELEMENT_ARRAY_BUFFER, new Uint16Array( inx ), gl.STATIC_DRAW );
+        gl.enableVertexAttribArray( progDraw.inPos );
+        gl.vertexAttribPointer( progDraw.inPos, 2, gl.FLOAT, false, 0, 0 ); 
+    
+        gl.enable( gl.DEPTH_TEST );
+        gl.clearColor( 0.0, 0.0, 0.0, 1.0 );
+
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        gl.uniform1i(progDraw.iChannel0, 0);
+
+        window.onresize = resize;
+        resize();
+        requestAnimationFrame(render);
+    }
+
+    function resize() {
+        //vp_size = [gl.drawingBufferWidth, gl.drawingBufferHeight];
+        vp_size = [Math.min(window.innerWidth, 1024), Math.min(window.innerHeight, 1024)];
+        //vp_size = [1024, 1024];
+        //vp_size = [256, 256]
+        canvas.width = Math.min(vp_size[0], vp_size[1]);
+        canvas.height = canvas.width;
+    }
+
+    function render(deltaMS) {
+
+        gl.viewport( 0, 0, canvas.width, canvas.height );
+        gl.clear( gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT );
+   
+        gl.uniform1f(progDraw.iTime, deltaMS/1000.0);
+        gl.uniform2f(progDraw.iResolution, canvas.width, canvas.height);
+        gl.uniform2f(progDraw.iMouse, mousepos[0], mousepos[1]);
+        gl.drawElements( gl.TRIANGLES, bufObj.inx.len, gl.UNSIGNED_SHORT, 0 );
+    
+        requestAnimationFrame(render);
+    }
+
+    //
+    // Initialize a texture and load an image.
+    // When the image finished loading copy it into the texture.
+    //
+    function loadTexture(gl, url) {
+      const texture = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+
+      // Because images have to be downloaded over the internet
+      // they might take a moment until they are ready.
+      // Until then put a single pixel in the texture so we can
+      // use it immediately. When the image has finished downloading
+      // we'll update the texture with the contents of the image.
+      const level = 0;
+      const internalFormat = gl.RGBA;
+      const width = 1;
+      const height = 1;
+      const border = 0;
+      const srcFormat = gl.RGBA;
+      const srcType = gl.UNSIGNED_BYTE;
+      const pixel = new Uint8Array([0, 0, 255, 255]); // opaque blue
+      gl.texImage2D(
+        gl.TEXTURE_2D,
+        level,
+        internalFormat,
+        width,
+        height,
+        border,
+        srcFormat,
+        srcType,
+        pixel,
+      );
+
+      const image = new Image();
+      image.onload = () => {
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        gl.texImage2D(
+          gl.TEXTURE_2D,
+          level,
+          internalFormat,
+          srcFormat,
+          srcType,
+          image,
+        );
+
+        // WebGL1 has different requirements for power of 2 images
+        // vs. non power of 2 images so check if the image is a
+        // power of 2 in both dimensions.
+        if (isPowerOf2(image.width) && isPowerOf2(image.height)) {
+          // Yes, it's a power of 2. Generate mips.
+          gl.generateMipmap(gl.TEXTURE_2D);
+        } else {
+          // No, it's not a power of 2. Turn off mips and set
+          // wrapping to clamp to edge
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        }
+      };
+      image.src = url;
+
+      return texture;
+    }
+
+    function isPowerOf2(value) {
+      return (value & (value - 1)) === 0;
+    }
+
+    initScene();
+
+    })();
+</script>
+
+    </body>
+</html>
