@@ -4,6 +4,7 @@
     </head>
     <body>
 
+<!-- Shader taken from https://www.shadertoy.com/view/ldXGW4 -->
 <style>
     .logo-canvas {
         border: none;
@@ -24,11 +25,11 @@ uniform sampler2D iChannel0;
     
 // change these values to 0.0 to turn off individual effects
 float vertJerkOpt = 0.46;
-float vertMovementOpt = 0.0;
-float bottomStaticOpt = 1.4;
+uniform float vertMovementOpt;
+uniform float bottomStaticOpt;
 float scalinesOpt = 1.0;
 float rgbOffsetOpt = 0.3;
-float horzFuzzOpt = 0.2;
+uniform float horzFuzzOpt;
 
 // Noise generation functions borrowed from:
 // https://github.com/ashima/webgl-noise/blob/master/src/noise2D.glsl
@@ -165,6 +166,34 @@ void main()
     (function loadscene() {    
 
     var canvas, gl, vp_size, prog, bufObj = {}, mousepos = [0, 0];
+    var rollAmount = 0.0;
+    var horzFuzzOpt = 0.2;
+    var static = 1.4;
+    var channel = 0;
+
+    function changeChannels() {
+        console.log('ROLL');
+        rollAmount = 1.0;
+        horzFuzzOpt = 5.0;
+        static = 10;
+
+        setTimeout(() => {
+            channel++;
+            if (channel > 1) {
+                channel = 0;
+            }
+        }, 50);
+
+        setTimeout(() => {
+            rollAmount = 0.0;
+            horzFuzzOpt = 0.2;
+            static = 1.4;
+        }, 500);
+    }
+
+    setInterval(() => {
+        changeChannels();
+    }, 5000);
 
     function initScene() {
 
@@ -197,9 +226,15 @@ void main()
         progDraw.iMouse = gl.getUniformLocation(progDraw, "iMouse");
         progDraw.iResolution = gl.getUniformLocation(progDraw, "iResolution");
         progDraw.iChannel0 = gl.getUniformLocation(progDraw, "iChannel0");
+        progDraw.rollAmount = gl.getUniformLocation(progDraw, "vertMovementOpt");
+        progDraw.horzFuzzOpt = gl.getUniformLocation(progDraw, "horzFuzzOpt");
+        progDraw.bottomStaticOpt = gl.getUniformLocation(progDraw, "bottomStaticOpt");
         gl.useProgram(progDraw);
 
         var texture = loadTexture(gl, '/img/logo-square.png');
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+
+        var texture1 = loadTexture(gl, '/img/channel-1.png');
         gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
 
         var pos = [ -1, -1, 1, -1, 1, 1, -1, 1 ];
@@ -220,6 +255,10 @@ void main()
         gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, texture);
         gl.uniform1i(progDraw.iChannel0, 0);
+
+        gl.activeTexture(gl.TEXTURE1);
+        gl.bindTexture(gl.TEXTURE_2D, texture1);
+
 
         window.onresize = resize;
         resize();
@@ -243,6 +282,10 @@ void main()
         gl.uniform1f(progDraw.iTime, deltaMS/1000.0);
         gl.uniform2f(progDraw.iResolution, canvas.width, canvas.height);
         gl.uniform2f(progDraw.iMouse, mousepos[0], mousepos[1]);
+        gl.uniform1f(progDraw.rollAmount, rollAmount);
+        gl.uniform1f(progDraw.horzFuzzOpt, horzFuzzOpt);
+        gl.uniform1f(progDraw.bottomStaticOpt, static);
+        gl.uniform1i(progDraw.iChannel0, channel);
         gl.drawElements( gl.TRIANGLES, bufObj.inx.len, gl.UNSIGNED_SHORT, 0 );
     
         requestAnimationFrame(render);
